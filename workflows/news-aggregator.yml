@@ -1,0 +1,128 @@
+name: Tech News Aggregator
+
+on:
+  schedule:
+    # 每天早上 8 点 (UTC) = 下午 4 点 (北京时间)
+    - cron: '0 8 * * *'
+  workflow_dispatch:
+    inputs:
+      tech_stacks:
+        description: 'Tech stacks to filter (space-separated)'
+        required: false
+        default: 'Python JavaScript TypeScript Rust Go AI/ML'
+      sources:
+        description: 'News sources (space-separated)'
+        required: false
+        default: 'github_trending hacker_news dev_to'
+      limit:
+        description: 'Max items per stack'
+        required: false
+        default: '15'
+
+jobs:
+  generate-report:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      
+      - name: Generate HTML Report
+        id: html-report
+        run: |
+          python scripts/tech_news_aggregator.py \
+            --sources ${{ github.event.inputs.sources || 'github_trending hacker_news dev_to' }} \
+            --tech-stacks ${{ github.event.inputs.tech_stacks || 'Python JavaScript TypeScript Rust Go AI/ML' }} \
+            --limit ${{ github.event.inputs.limit || '15' }} \
+            --format html \
+            --output tech-news-report.html
+      
+      - name: Generate JSON Data
+        id: json-report
+        run: |
+          python scripts/tech_news_aggregator.py \
+            --sources ${{ github.event.inputs.sources || 'github_trending hacker_news dev_to' }} \
+            --format json \
+            --output tech-news-data.json
+      
+      - name: Generate Markdown Summary
+        id: md-report
+        run: |
+          python scripts/tech_news_aggregator.py \
+            --sources ${{ github.event.inputs.sources || 'github_trending hacker_news dev_to' }} \
+            --tech-stacks ${{ github.event.inputs.tech_stacks || 'Python JavaScript TypeScript Rust Go AI/ML' }} \
+            --limit ${{ github.event.inputs.limit || '15' }} \
+            --format markdown \
+            --output tech-news-summary.md
+      
+      - name: Upload Reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: tech-news-reports-${{ github.run_number }}
+          path: |
+            tech-news-report.html
+            tech-news-data.json
+            tech-news-summary.md
+          retention-days: 30
+      
+      - name: Commit report to branch
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          
+          # Create reports directory if not exists
+          mkdir -p reports
+          
+          # Copy reports with timestamp
+          TIMESTAMP=$(date +%Y-%m-%d_%H-%M)
+          cp tech-news-report.html "reports/tech-news-${TIMESTAMP}.html"
+          cp tech-news-data.json "reports/tech-news-${TIMESTAMP}.json"
+          
+          # Commit and push
+          git add reports/
+          git commit -m "Auto-update tech news reports [skip ci]" || echo "No changes to commit"
+          git push || echo "Push failed, skipping..."
+
+      - name: Create Summary Comment
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          REPORT_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          echo "## 📰 Tech News Report Generated" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Run**: [#${{ github.run_number }}]($REPORT_URL)" >> $GITHUB_STEP_SUMMARY
+          echo "- **Time**: $(date)" >> $GITHUB_STEP_SUMMARY
+          echo "- **Sources**: ${{ github.event.inputs.sources || 'github_trending hacker_news dev_to' }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Reports available in the artifacts." >> $GITHUB_STEP_SUMMARY
+
+  # Optional: Send to Slack or other notification services
+  # notify:
+  #   needs: generate-report
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - name: Send Slack notification
+  #       if: success()
+  #       uses: slackapi/slack-github-action@v1
+  #       with:
+  #         channel-id: 'tech-news'
+  #         payload: |
+  #           {
+  #             "text": "📰 Daily Tech News Report generated",
+  #             "blocks": [
+  #               {
+  #                 "type": "section",
+  #                 "text": {
+  #                   "type": "mrkdwn",
+  #                   "text": "*Tech News Report Ready*"
+  #                 }
+  #               }
+  #             ]
+  #           }
+  #       env:
+  #         SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
